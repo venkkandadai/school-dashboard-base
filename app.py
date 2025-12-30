@@ -330,7 +330,8 @@ def render_hist(series: pd.Series, title: str):
 
 # ----- NBME logo (top-left) -----
 if os.path.exists(LOGO_PATH):
-    st.sidebar.image(LOGO_PATH, use_container_width=True)
+    st.sidebar.image(LOGO_PATH, width="stretch"
+)
     st.sidebar.markdown("---")
 
 # -------------------------
@@ -467,7 +468,7 @@ def page_score_reports():
             "product_subfamily": "Subfamily",
             "n_examinees": "# Examinees",
         })[["Order ID", "Test Date", "Exam", "Family", "Subfamily", "# Examinees"]],
-        use_container_width=True,
+        width="stretch",
         height=320
     )
 
@@ -558,7 +559,7 @@ def page_student_search():
             "product_subfamily": "Subfamily",
             "order_id": "Order ID"
         }),
-        use_container_width=True,
+        width="stretch",
         height=280
     )
 
@@ -671,28 +672,34 @@ def render_exam_admin_detail(order_id: str, highlight_examinee_id: str | None = 
     left, right = st.columns([1.1, 1.9])
 
     with left:
-        st.markdown("### Distribution (Total)")
-        if total_label and total_label in wide.columns:
-            render_hist(wide[total_label], f"Total: {total_label}")
-        else:
-            st.info("TOTAL metric not found for this administration.")
-
         st.markdown("### Subscore preview")
         if selected_group != "All metrics" and "metric_group" in df_order.columns:
-            grp = df_order[
-                (df_order["metric_group"].astype(str) == selected_group) &
-                (df_order["metric_label"].apply(is_valid_subscore_label))
-            ]
+
+            if str(selected_group).upper() == "TOTAL":
+                grp = df_order[df_order["metric_group"].astype(str).str.upper() == "TOTAL"]
+            else:
+                grp = df_order[
+                    (df_order["metric_group"].astype(str) == selected_group) &
+                    (df_order["metric_label"].apply(is_valid_subscore_label))
+                ]
+
             if grp.empty:
                 st.caption("No metrics in this group for this exam.")
             else:
-                summary = grp.groupby("metric_label")["value"].mean().sort_values(ascending=False).head(6).reset_index()
+                summary = (
+                    grp.groupby("metric_label")["value"]
+                    .mean()
+                    .sort_values(ascending=False)
+                    .head(6)
+                    .reset_index()
+                )
                 summary["mean"] = summary["value"].round(1)
                 summary["metric_label"] = summary["metric_label"].apply(prettify_metric_column)
-                st.dataframe(summary[["metric_label", "mean"]], use_container_width=True, height=240)
+                st.dataframe(summary[["metric_label", "mean"]], width="stretch", height=240)
 
         else:
             st.caption("Select a metric group to preview subscores.")
+
 
     with right:
         st.markdown("### Roster (Download Scores)")
