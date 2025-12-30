@@ -27,7 +27,27 @@ report_runs, examinees, product_catalog, entitlements = load_data()
 @st.cache_data(show_spinner=False)
 def load_scores_for_school(school_id):
     path = os.path.join(DATA_DIR, f"scores_long_{school_id}.csv.gz")
-    return pd.read_csv(path, compression="gzip", parse_dates=["test_date"])
+    return pd.read_csv(
+        path,
+        compression="gzip",
+        parse_dates=["test_date"],
+        usecols=[
+            "school_id", "order_id", "test_date",
+            "examinee_id", "examinee_name", "ms_year",
+            "metric_label", "metric_group", "value"
+        ],
+        dtype={
+            "school_id": "int64",
+            "order_id": "string",
+            "examinee_id": "string",
+            "examinee_name": "string",
+            "ms_year": "category",
+            "metric_label": "string",
+            "metric_group": "category",
+            "value": "float32"
+        }
+    )
+
 
 
 # ----- School naming (UI-only, stable mapping) -----
@@ -711,8 +731,18 @@ def render_exam_admin_detail(order_id: str, highlight_examinee_id: str | None = 
                 rest = roster[roster["examinee_id"] != highlight_examinee_id]
                 roster = pd.concat([top, rest], ignore_index=True)
 
-        st.caption(f"{len(roster):,} students shown.")
-        st.dataframe(roster, use_container_width=True, height=420)
+        MAX_ROWS_DEFAULT = 500
+        show_all = st.checkbox("Show full roster", value=False)
+
+        display_roster = roster if show_all else roster.head(MAX_ROWS_DEFAULT)
+
+        st.caption(
+            f"{len(roster):,} students matched."
+            + ("" if show_all else f" Showing first {MAX_ROWS_DEFAULT:,}.")
+        )
+
+        st.dataframe(display_roster, width="stretch", height=420)
+
 
         st.download_button(
             "Export roster as CSV",
