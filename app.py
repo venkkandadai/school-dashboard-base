@@ -17,17 +17,18 @@ LOGO_PATH = "images/nbme_logo.svg"
 @st.cache_data(show_spinner=False)
 def load_data():
     report_runs = pd.read_csv(os.path.join(DATA_DIR, "report_runs.csv"), parse_dates=["order_date", "test_date"])
-    scores_long = pd.read_csv(
-        os.path.join(DATA_DIR, "scores_long.csv.gz"),
-        parse_dates=["test_date"],
-        compression="gzip"
-    )
     examinees = pd.read_csv(os.path.join(DATA_DIR, "examinees.csv"))
     product_catalog = pd.read_csv(os.path.join(DATA_DIR, "product_catalog.csv"))
     entitlements = pd.read_csv(os.path.join(DATA_DIR, "school_entitlements.csv"))
-    return report_runs, scores_long, examinees, product_catalog, entitlements
+    return report_runs, examinees, product_catalog, entitlements
 
-report_runs, scores_long, examinees, product_catalog, entitlements = load_data()
+report_runs, examinees, product_catalog, entitlements = load_data()
+
+@st.cache_data(show_spinner=False)
+def load_scores_for_school(school_id):
+    path = os.path.join(DATA_DIR, f"scores_long_{school_id}.csv.gz")
+    return pd.read_csv(path, compression="gzip", parse_dates=["test_date"])
+
 
 # ----- School naming (UI-only, stable mapping) -----
 school_ids = sorted(report_runs["school_id"].unique().tolist())
@@ -368,9 +369,16 @@ st.caption(f"Current school: {school_label(school_id)}")
 
 
 # 24-month constraint (Base)
-rr_school = filter_last_24_months(report_runs[report_runs["school_id"] == school_id].copy(), "test_date")
-sl_school = filter_last_24_months(scores_long[scores_long["school_id"] == school_id].copy(), "test_date")
+rr_school = filter_last_24_months(
+    report_runs[report_runs["school_id"] == school_id].copy(),
+    "test_date"
+)
+
+scores_long = load_scores_for_school(school_id)
+sl_school = filter_last_24_months(scores_long.copy(), "test_date")
+
 ex_school = examinees[examinees["school_id"] == school_id].copy()
+
 
 # Navigation (respect routed destination)
 nav = st.sidebar.radio(
