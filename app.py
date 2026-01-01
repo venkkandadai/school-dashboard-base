@@ -213,11 +213,50 @@ def choose_total_metric_label(df_order: pd.DataFrame) -> str | None:
 
     return None
 
+def get_total_series(df_order: pd.DataFrame) -> pd.Series:
+    """
+    Returns a numeric Series of total scores for an order_id, using long-form data.
+    Prefers metric_group == TOTAL, else falls back to labels containing 'Total'
+    and prefers 'Scaled' when multiple totals exist.
+    """
+    if df_order.empty:
+        return pd.Series(dtype="float64")
+
+    df = df_order.copy()
+    df["metric_label"] = df["metric_label"].astype(str)
+
+    # Prefer explicit TOTAL group
+    if "metric_group" in df.columns:
+        tot = df[df["metric_group"].astype(str).str.upper() == "TOTAL"]
+        if not tot.empty:
+            # If multiple totals, prefer scaled
+            labels = tot["metric_label"].unique().tolist()
+            scaled = [l for l in labels if "scaled" in l.lower()]
+            chosen = scaled[0] if scaled else labels[0]
+            return tot[tot["metric_label"] == chosen]["value"].dropna()
+
+    # Fallback: any label containing Total (prefer scaled)
+    tot2 = df[df["metric_label"].str.contains("Total", case=False, na=False)]
+    if not tot2.empty:
+        labels = tot2["metric_label"].unique().tolist()
+        scaled = [l for l in labels if "scaled" in l.lower()]
+        chosen = scaled[0] if scaled else labels[0]
+        return tot2[tot2["metric_label"] == chosen]["value"].dropna()
+
+    return pd.Series(dtype="float64")
+
 
 def order_scores_wide(df_order: pd.DataFrame) -> pd.DataFrame:
     idx_cols = ["examinee_id", "examinee_name", "ms_year"]
     keep = df_order[idx_cols + ["metric_label", "value"]].copy()
-    wide = keep.pivot_table(index=idx_cols, columns="metric_label", values="value", aggfunc="mean").reset_index()
+    wide = keep.pivot_table(
+        index=idx_cols,
+        columns="metric_label",
+        values="value",
+        aggfunc="mean",
+        observed=False
+    ).reset_index()
+
     wide.columns = [c if isinstance(c, str) else str(c) for c in wide.columns]
     return wide
 
@@ -330,9 +369,9 @@ def render_hist(series: pd.Series, title: str):
 
 # ----- NBME logo (top-left) -----
 if os.path.exists(LOGO_PATH):
-    st.sidebar.image(LOGO_PATH, width="stretch"
-)
+    st.sidebar.image(LOGO_PATH, use_container_width=True)
     st.sidebar.markdown("---")
+
 
 # -------------------------
 # Base Tier shell / state
@@ -468,7 +507,7 @@ def page_score_reports():
             "product_subfamily": "Subfamily",
             "n_examinees": "# Examinees",
         })[["Order ID", "Test Date", "Exam", "Family", "Subfamily", "# Examinees"]],
-        width="stretch",
+        use_container_width=True,
         height=320
     )
 
@@ -497,6 +536,17 @@ def page_student_search():
         placeholder="Type last name, first name, or partial (e.g., Wong, Mart, al-)"
     )
 
+    # Optional: reset dropdown selection when the search query changes
+    q_norm = q.strip().lower()
+    if "prev_student_search" not in st.session_state:
+        st.session_state.prev_student_search = ""
+
+    if q_norm != st.session_state.prev_student_search:
+        st.session_state.prev_student_search = q_norm
+        if "student_selectbox" in st.session_state:
+            del st.session_state["student_selectbox"]
+
+
     if q.strip():
         matches = ex_school[safe_contains(ex_school["examinee_name"], q)].copy()
     else:
@@ -511,16 +561,12 @@ def page_student_search():
         st.info("No students match that search.")
         return
 
-    forced_id = st.session_state.selected_student_id
+    sel_name = st.selectbox(
+        "Select a student",
+        matches["examinee_name"].tolist(),
+        key="student_selectbox"
+    )
 
-    if forced_id:
-        forced = ex_school[ex_school["examinee_id"] == forced_id]
-        if not forced.empty:
-            sel_name = forced["examinee_name"].iloc[0]
-        else:
-            sel_name = st.selectbox("Select a student", matches["examinee_name"].tolist())
-    else:
-        sel_name = st.selectbox("Select a student", matches["examinee_name"].tolist())
 
     # IMPORTANT: look up the selected student in the full school roster, not just matches
     sel = ex_school[ex_school["examinee_name"] == sel_name].head(1)
@@ -559,7 +605,7 @@ def page_student_search():
             "product_subfamily": "Subfamily",
             "order_id": "Order ID"
         }),
-        width="stretch",
+        use_container_width=True,
         height=280
     )
 
@@ -672,7 +718,16 @@ def render_exam_admin_detail(order_id: str, highlight_examinee_id: str | None = 
     left, right = st.columns([1.1, 1.9])
 
     with left:
+        st.markdown("### Distribution (Total)")
+
+        total_vals = get_total_series(df_order)
+        if not total_vals.empty:
+            render_hist(total_vals, "Total score distribution")
+        else:
+            st.info("No total score metric found for this administration.")
+
         st.markdown("### Subscore preview")
+
         if selected_group != "All metrics" and "metric_group" in df_order.columns:
 
             if str(selected_group).upper() == "TOTAL":
@@ -695,7 +750,7 @@ def render_exam_admin_detail(order_id: str, highlight_examinee_id: str | None = 
                 )
                 summary["mean"] = summary["value"].round(1)
                 summary["metric_label"] = summary["metric_label"].apply(prettify_metric_column)
-                st.dataframe(summary[["metric_label", "mean"]], width="stretch", height=240)
+                st.dataframe(summary[["metric_label", "mean"]], use_container_width=True, height=240)
 
         else:
             st.caption("Select a metric group to preview subscores.")
@@ -739,16 +794,24 @@ def render_exam_admin_detail(order_id: str, highlight_examinee_id: str | None = 
                 roster = pd.concat([top, rest], ignore_index=True)
 
         MAX_ROWS_DEFAULT = 500
-        show_all = st.checkbox("Show full roster", value=False)
+        show_all = st.checkbox(
+            "Show all students (large administrations may be slower)",
+            value=False
+        )
+
 
         display_roster = roster if show_all else roster.head(MAX_ROWS_DEFAULT)
 
-        st.caption(
-            f"{len(roster):,} students matched."
-            + ("" if show_all else f" Showing first {MAX_ROWS_DEFAULT:,}.")
-        )
+        shown = len(display_roster)
+        total = len(roster)
 
-        st.dataframe(display_roster, width="stretch", height=420)
+        if show_all or total <= MAX_ROWS_DEFAULT:
+            st.caption(f"{total:,} students matched.")
+        else:
+            st.caption(f"{total:,} students matched. Showing first {shown:,}.")
+
+
+        st.dataframe(display_roster, use_container_width=True, height=420)
 
 
         st.download_button(
